@@ -9,6 +9,8 @@ __pycache__/
 data/raw/*
 data/interim/*
 data/processed/*
+data/chunks/*
+data/vector_store/*
 storage/*
 
 # Keep directory placeholders if present
@@ -21,6 +23,8 @@ data/processed/success/*
 !data/processed/failed/
 data/processed/failed/*
 !data/processed/failed/.gitkeep
+!data/chunks/.gitkeep
+!data/vector_store/.gitkeep
 !storage/.gitkeep
 
 # Samples/examples are allowed in git
