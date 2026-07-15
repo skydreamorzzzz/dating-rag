@@ -1,0 +1,28 @@
+.env
+.venv/
+.claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Private/source documents and generated datasets
+data/raw/*
+data/interim/*
+data/processed/*
+storage/*
+
+# Keep directory placeholders if present
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/processed/success/
+data/processed/success/*
+!data/processed/success/.gitkeep
+!data/processed/failed/
+data/processed/failed/*
+!data/processed/failed/.gitkeep
+!storage/.gitkeep
+
+# Samples/examples are allowed in git
+!data/samples/
+!data/samples/**
