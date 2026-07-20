@@ -95,14 +95,30 @@ The first vector index uses `sentence-transformers` with
 python scripts/build_index.py --rebuild
 ```
 
-Useful options:
+By default the script reads every `*.jsonl` file under `data/chunks/`, embeds
+chunks in batches, and persists the Chroma collection under
+`data/vector_store/`. Useful options:
 
 ```bash
 python scripts/build_index.py --batch-size 32
+python scripts/build_index.py --chunks data/chunks --persist-dir data/vector_store
 python scripts/build_index.py --collection dating_rag_chunks
 python scripts/build_index.py --model BAAI/bge-small-zh-v1.5
 ```
 
 The index stores `chunk_id` as the Chroma id, chunk text as the document, and
-safe metadata such as `document_id`, `source_file`, `file_type`, `chunk_index`,
-`page`, `title`, and `section` when present.
+safe metadata such as `doc_id`, `source_file`, `source_path`, `doc_type`,
+`chunk_index`, `page`, `title`, and `section` when present. Re-running without
+`--rebuild` skips chunk IDs that are already present; `--rebuild` recreates the
+collection first.
+
+## Search Vector Index
+
+After building the index, run a simple Top-K retrieval check:
+
+```bash
+python scripts/search_index.py "如何聊天" --top-k 5
+```
+
+This only returns retrieved chunk text and source metadata. It does not call
+DeepSeek or generate a final RAG answer.

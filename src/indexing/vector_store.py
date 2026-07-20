@@ -1,22 +1,37 @@
-"""Chroma vector-store helpers for chunk retrieval."""
+"""Chroma vector-store helpers for chunk indexing and retrieval."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 
 from src.utils.config import DEFAULT_CHROMA_COLLECTION, VECTOR_STORE_DIR
 
 CHROMA_METADATA_KEYS = (
+    "doc_id",
     "document_id",
     "source_file",
+    "source_path",
+    "doc_type",
     "file_type",
     "chunk_index",
     "page",
     "title",
     "section",
 )
+
+
+def iter_chunk_files(path: Path) -> Iterable[Path]:
+    """Yield chunk JSONL files from one file or a directory tree."""
+    path = Path(path)
+    if path.is_file():
+        if path.suffix.lower() == ".jsonl":
+            yield path
+        return
+    if path.is_dir():
+        yield from sorted(item for item in path.rglob("*.jsonl") if item.is_file())
 
 
 def read_chunks(path: Path) -> list[dict]:
@@ -34,6 +49,26 @@ def read_chunks(path: Path) -> list[dict]:
             validate_chunk(chunk, line_no)
             chunks.append(chunk)
     return chunks
+
+
+def read_chunks_lenient(path: Path) -> tuple[list[dict], int]:
+    """Read chunk JSONL files and count bad rows instead of aborting."""
+    chunks: list[dict] = []
+    errors = 0
+    for chunk_file in iter_chunk_files(path):
+        with chunk_file.open("r", encoding="utf-8") as f:
+            for line_no, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    validate_chunk(chunk, line_no)
+                except Exception:
+                    errors += 1
+                    continue
+                chunks.append(chunk)
+    return chunks, errors
 
 
 def validate_chunk(chunk: dict, line_no: int | None = None) -> None:
@@ -101,6 +136,18 @@ class ChromaVectorStore:
             name=self.collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+    def existing_ids(self, ids: Iterable[str]) -> set[str]:
+        """Return IDs that are already present in the collection."""
+        requested = [chunk_id for chunk_id in ids if chunk_id]
+        if not requested:
+            return set()
+        result = self.get_collection().get(ids=requested)
+        return set(result.get("ids", []))
+
+    def count(self) -> int:
+        """Return the current number of vectors in the collection."""
+        return int(self.get_collection().count())
 
     def upsert_chunks(
         self,
