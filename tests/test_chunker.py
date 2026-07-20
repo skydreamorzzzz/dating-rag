@@ -30,7 +30,10 @@ def test_title_section_page_null_are_preserved():
     assert chunks[0]["title"] is None
     assert chunks[0]["section"] is None
     assert chunks[0]["page"] is None
+    assert chunks[0]["doc_id"] == "doc-1"
     assert chunks[0]["document_id"] == "doc-1"
+    assert chunks[0]["source_path"] == "/data/raw/sample.pdf"
+    assert chunks[0]["doc_type"] == "pdf"
 
 
 def test_short_text_produces_single_chunk():
@@ -49,6 +52,13 @@ def test_long_text_uses_overlap():
     assert chunks[0][-10:].strip() in chunks[1]
 
 
+def test_normal_text_prefers_sentence_boundaries():
+    chunks = split_text("第一句。第二句。第三句。第四句。", chunk_size=8, chunk_overlap=0)
+
+    assert len(chunks) > 1
+    assert all(chunk.endswith("。") for chunk in chunks)
+
+
 def test_clean_text_normalizes_extra_whitespace_and_newlines():
     text = " 第一行  有  空格\r\n\r\n\r\n 第二行\t有制表符 "
 
@@ -59,6 +69,19 @@ def test_empty_chunk_not_written_for_whitespace_text():
     chunks = chunk_record(_record(text=" \n\t "))
 
     assert chunks == []
+
+
+def test_very_long_text_is_hard_split():
+    chunks = split_text("甲" * 120, chunk_size=50, chunk_overlap=10)
+
+    assert len(chunks) == 3
+    assert chunks[1].startswith("甲" * 10)
+
+
+def test_metadata_is_preserved():
+    chunks = chunk_record(_record(metadata={"author": "tester", "nested": {"x": 1}}))
+
+    assert chunks[0]["metadata"] == {"author": "tester", "nested": {"x": 1}}
 
 
 def test_build_chunks_reads_only_success_dir(tmp_path):
@@ -82,11 +105,12 @@ def test_build_chunks_reads_only_success_dir(tmp_path):
     stats = build_chunks_from_success(success_dir=success_dir, output_path=output_path)
     lines = output_path.read_text(encoding="utf-8").strip().splitlines()
 
+    assert stats["records"] == 1
     assert stats["documents"] == 1
     assert stats["chunks"] == 1
     assert len(lines) == 1
     chunk = json.loads(lines[0])
-    assert chunk["document_id"] == "success-doc"
+    assert chunk["doc_id"] == "success-doc"
     assert "失败文本" not in lines[0]
 
 
@@ -106,3 +130,23 @@ def test_build_chunks_overwrites_output(tmp_path):
 
     assert first == second
     assert first_output == second_output
+
+
+def test_malformed_jsonl_line_does_not_abort_batch(tmp_path):
+    success_dir = tmp_path / "success"
+    output_path = tmp_path / "chunks.jsonl"
+    success_dir.mkdir()
+    (success_dir / "doc.jsonl").write_text(
+        "{bad json}\n"
+        + json.dumps(_record(doc_id="good-doc", text="有效文本。"), ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    stats = build_chunks_from_success(success_dir=success_dir, output_path=output_path)
+    lines = output_path.read_text(encoding="utf-8").strip().splitlines()
+
+    assert stats["records"] == 1
+    assert stats["errors"] == 1
+    assert stats["chunks"] == 1
+    assert json.loads(lines[0])["doc_id"] == "good-doc"

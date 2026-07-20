@@ -35,6 +35,7 @@ def main() -> None:
     )
 
     print("\n=== Chunk Build Summary ===")
+    print(f"  Total records  : {stats['records']}")
     print(f"  Documents read : {stats['documents']}")
     print(f"  Chunks written : {stats['chunks']}")
     print(f"  Skipped records: {stats['skipped']}")

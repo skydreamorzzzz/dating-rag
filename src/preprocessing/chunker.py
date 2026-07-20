@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from src.preprocessing.cleaner import clean_text
 from src.utils.config import CHUNKS_DIR, SUCCESS_DIR
@@ -34,33 +34,37 @@ def build_chunks_from_success(
     output_path = Path(output_path) if output_path else CHUNKS_DIR / "chunks.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    stats = {"documents": 0, "chunks": 0, "skipped": 0, "errors": 0}
+    stats = {"records": 0, "documents": 0, "chunks": 0, "skipped": 0, "errors": 0}
     chunks: list[dict] = []
 
     for input_path in _iter_input_files(success_dir):
-        try:
-            records = list(read_records(input_path))
-        except Exception:
-            stats["errors"] += 1
-            continue
-
-        for record in records:
-            if record.get("status") != "success":
-                stats["skipped"] += 1
+        for record, error in read_records_with_errors(input_path):
+            if error is not None:
+                stats["errors"] += 1
+                continue
+            if record is None:
                 continue
 
-            text = clean_text(record.get("text"))
-            if not text:
-                stats["skipped"] += 1
-                continue
+            stats["records"] += 1
+            try:
+                if record.get("status") != "success":
+                    stats["skipped"] += 1
+                    continue
 
-            stats["documents"] += 1
-            doc_chunks = chunk_record(record, chunk_size, chunk_overlap)
-            if not doc_chunks:
-                stats["skipped"] += 1
-                continue
-            chunks.extend(doc_chunks)
-            stats["chunks"] += len(doc_chunks)
+                text = clean_text(record.get("text"))
+                if not text:
+                    stats["skipped"] += 1
+                    continue
+
+                stats["documents"] += 1
+                doc_chunks = chunk_record(record, chunk_size, chunk_overlap)
+                if not doc_chunks:
+                    stats["skipped"] += 1
+                    continue
+                chunks.extend(doc_chunks)
+                stats["chunks"] += len(doc_chunks)
+            except Exception:
+                stats["errors"] += 1
 
     write_chunks(chunks, output_path)
     return stats
@@ -68,23 +72,48 @@ def build_chunks_from_success(
 
 def read_records(path: Path) -> Iterable[dict]:
     """Yield records from JSONL, JSON list, or single JSON object files."""
+    for record, error in read_records_with_errors(path):
+        if error is not None:
+            raise error
+        if record is not None:
+            yield record
+
+
+def read_records_with_errors(path: Path) -> Iterator[tuple[dict | None, Exception | None]]:
+    """Yield parsed records while isolating malformed lines or files."""
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         with path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
-                    yield json.loads(line)
+                    try:
+                        data = json.loads(line)
+                    except Exception as exc:
+                        yield None, exc
+                        continue
+                    if isinstance(data, dict):
+                        yield data, None
+                    else:
+                        yield None, ValueError("JSONL line is not an object")
         return
 
     if suffix == ".json":
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            yield None, exc
+            return
         if isinstance(data, list):
             for item in data:
                 if isinstance(item, dict):
-                    yield item
+                    yield item, None
+                else:
+                    yield None, ValueError("JSON list item is not an object")
         elif isinstance(data, dict):
-            yield data
+            yield data, None
+        else:
+            yield None, ValueError("JSON file is not an object or list")
 
 
 def chunk_record(
@@ -97,9 +126,10 @@ def chunk_record(
     pieces = split_text(text, chunk_size, chunk_overlap)
     chunks: list[dict] = []
 
-    document_id = record.get("doc_id") or record.get("document_id")
+    doc_id = record.get("doc_id") or record.get("document_id")
     source_file = record.get("source_file")
-    file_type = record.get("doc_type") or record.get("file_type")
+    source_path = record.get("source_path")
+    doc_type = record.get("doc_type") or record.get("file_type")
     title = record.get("title")
     section = record.get("section")
     page = record.get("page")
@@ -110,11 +140,14 @@ def chunk_record(
         if not piece:
             continue
         chunk = {
-            "chunk_id": make_chunk_id(document_id, source_file, page, section, index, piece),
-            "document_id": document_id,
+            "chunk_id": make_chunk_id(doc_id, source_path or source_file, page, section, index, piece),
+            "doc_id": doc_id,
+            "document_id": doc_id,
             "text": piece,
             "source_file": source_file,
-            "file_type": file_type,
+            "source_path": source_path,
+            "doc_type": doc_type,
+            "file_type": doc_type,
             "page": page,
             "title": title,
             "section": section,
